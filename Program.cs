@@ -1,18 +1,41 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Diagnostics;
-using System.IO;
-using System.Text;
 using System.Runtime.InteropServices;
 
 namespace FMMapGeotagPhoto
 {
     static class Program
     {
-        static string s_AppName = "FMMapGeotagPhoto";
+        const string c_AppName = "FMMapGeotagPhoto";
+
+        const string c_CommandLabel = "Map Photo";
+
+        const string c_HowToUse =
+@"FMMapGeotagPhoto is intended for use as a right-click command from the
+Windows File Explorer. First, you must register the application. Do this by
+copying the file 'FMMapGeotagPhoto' to an apprpriate directory and then
+registering it by executing the following command:
+   FMMapGeotagPhoto -register
+
+Once the application has been registered, you can right-click on any .jpg or
+.jpeg file and select 'Map Photo'. If the photo has been geotagged (usually
+the case for phone cameras) then you will get a map of the location where
+the photo was taken. If the photo has not been geotagged then you get a
+message, 'Photo is not geotagged. Cannot map its location.'
+
+To unregister the application, when moving it or removing from the computer,
+execute the following command:
+   FMMapGeotagPhoto -unregister";
+
+        const string c_Registered =
+@"Application has registered the 'Map Photo' command for .jpg and .jpeg files.";
+
+        const string c_Unregistered =
+@"Application has unregistered the 'Map Photo' command for .jpg and .jpeg files.";
+
+        const string c_InternalRegCommand = "::~register~::";
+        const string c_InternalUnregCommand = "::~unregister~::";
 
         /// <summary>
         /// The main entry point for the application.
@@ -23,49 +46,115 @@ namespace FMMapGeotagPhoto
             try
             {
                 String[] args = Environment.GetCommandLineArgs();
-                if (args.Length < 2)
+                if (args.Length != 2)
                 {
-                    MessageBox.Show(ForegroundWindow.Instance, "No file name specified.", s_AppName);
+                    MessageBox.Show(ForegroundWindow.Instance, c_HowToUse, c_AppName);
                     return;
                 }
 
-                /*
-                DialogResult dr = MessageBox.Show(ForegroundWindow.Instance,
-                    string.Format("Filename: {0}", args[1]),
-                    s_AppName,
-                    MessageBoxButtons.OKCancel
-                );
-                */
-
-                double latitude;
-                double longitude;
-                if (!Props.GetLatitudeLongitude(args[1], out latitude, out longitude))
+                switch (args[1].ToLowerInvariant())
                 {
-                    MessageBox.Show(
-                        ForegroundWindow.Instance,
-                        "Photo is not geotagged. Cannot map its location.",
-                        s_AppName
-                    );
-                    return;
+                    case "-register":
+                    case "/register":
+                        ElevateCommand(c_InternalRegCommand);
+                        break;
+
+                    case "-unregister":
+                    case "/unregister":
+                        ElevateCommand(c_InternalUnregCommand);
+                        break;
+
+                    case c_InternalRegCommand:
+                        RegisterApplication();
+                        break;
+
+                    case c_InternalUnregCommand:
+                        UnregisterApplication();
+                        break;
+
+                    default:
+                        MapGeotagPhoto(args[1]);
+                        break;
                 }
-
-                /*
-                DialogResult dr = MessageBox.Show(
-                    ForegroundWindow.Instance,
-                    string.Format("Lat, Long: {0}, {1}", latitude, longitude),
-                    s_AppName,
-                    MessageBoxButtons.OKCancel
-                );
-                */
-
-                string url = string.Format("http://www.bing.com/maps?&where1={0:f8}%20{1:f8}", latitude, longitude);
-                System.Diagnostics.Process.Start(url);
 
             }
             catch (Exception err)
             {
-                MessageBox.Show(err.ToString(), s_AppName);
+                MessageBox.Show(err.ToString(), c_AppName);
             }
+        }
+
+        static void MapGeotagPhoto(string path)
+        {
+            double latitude;
+            double longitude;
+            if (!Props.GetLatitudeLongitude(path, out latitude, out longitude))
+            {
+                MessageBox.Show(
+                    ForegroundWindow.Instance,
+                    "Photo is not geotagged. Cannot map its location.",
+                    c_AppName
+                );
+                return;
+            }
+
+            string url = string.Format("http://www.bing.com/maps?&where1={0:f8}%20{1:f8}", latitude, longitude);
+            System.Diagnostics.Process.Start(url);
+        }
+
+        static void ElevateCommand(string command)
+        {
+            ProcessStartInfo proc = new ProcessStartInfo();
+            proc.UseShellExecute = true;
+            proc.WorkingDirectory = Environment.CurrentDirectory;
+            proc.FileName = Application.ExecutablePath;
+            proc.Arguments = command;
+            proc.Verb = "runas";
+
+            try
+            {
+                Process.Start(proc);
+            }
+            catch
+            {
+                // The user refused to allow privileges elevation.
+                // Do nothing
+            }
+        }
+
+        static void RegisterApplication()
+        {
+            string command = string.Format("\"{0}\" \"%1\"", Application.ExecutablePath);
+            RegisterFileAssoc(".jpg", c_CommandLabel, command);
+            RegisterFileAssoc(".jpeg", c_CommandLabel, command);
+            MessageBox.Show(ForegroundWindow.Instance, c_Registered, c_AppName);
+        }
+
+        static void RegisterFileAssoc(string extension, string command, string commandLine)
+        {
+            var keyFileAssoc = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey("SystemFileAssociations", true);
+            var key = keyFileAssoc.CreateSubKey(extension);
+            key = key.CreateSubKey("Shell");
+            key = key.CreateSubKey(command);
+            key = key.CreateSubKey("Command");
+            key.SetValue(string.Empty, commandLine);
+        }
+
+        static void UnregisterApplication()
+        {
+            UnregisterFileAssoc(".jpg", c_CommandLabel);
+            UnregisterFileAssoc(".jpeg", c_CommandLabel);
+            MessageBox.Show(ForegroundWindow.Instance, c_Unregistered, c_AppName);
+        }
+
+        static void UnregisterFileAssoc(string extension, string command)
+        {
+            var keyFileAssoc = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey("SystemFileAssociations", true);
+            var key = keyFileAssoc.OpenSubKey(extension, true);
+            if (key == null) return;
+            key = key.OpenSubKey("Shell", true);
+            if (key == null) return;
+            key.DeleteSubKeyTree(command, false);
         }
     }
 
@@ -169,7 +258,6 @@ namespace FMMapGeotagPhoto
                 }
             }
         }
-
     }
 
     public class ForegroundWindow : IWin32Window
